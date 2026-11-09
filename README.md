@@ -7,7 +7,7 @@ Made by <a href="https://www.torn.com/profiles.php?XID=4393901">IvyLara [4393901
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/Ivylara19/faction-command-center/main/faction-command-center.user.js"><img alt="Install on desktop" src="https://img.shields.io/badge/INSTALL-Desktop_(Tampermonkey)-c9a74a?style=for-the-badge&labelColor=141414"></a>
+  <a href="https://raw.githubusercontent.com/Ivylara198/faction-command-center/main/faction-command-center.user.js"><img alt="Install on desktop" src="https://img.shields.io/badge/INSTALL-Desktop_(Tampermonkey)-c9a74a?style=for-the-badge&labelColor=141414"></a>
   <a href="#install-torn-pda"><img alt="Install on Torn PDA" src="https://img.shields.io/badge/INSTALL-Torn_PDA_(Mobile)-c9a74a?style=for-the-badge&labelColor=141414"></a>
 </p>
 <p align="center">
@@ -21,7 +21,7 @@ Made by <a href="https://www.torn.com/profiles.php?XID=4393901">IvyLara [4393901
 
 | I use | Do this |
 |---|---|
-| **A computer** | 1. [**Get Tampermonkey**](https://www.tampermonkey.net/)  2. [**Install the script**](https://raw.githubusercontent.com/Ivylara19/faction-command-center/main/faction-command-center.user.js) and press **Install**  3. Open torn.com and click the gold shield at the bottom-left |
+| **A computer** | 1. [**Get Tampermonkey**](https://www.tampermonkey.net/)  2. [**Install the script**](https://raw.githubusercontent.com/Ivylara198/faction-command-center/main/faction-command-center.user.js) and press **Install**  3. Open torn.com and click the gold shield at the bottom-left |
 | **Torn PDA (phone)** | Follow [**Install (Torn PDA)**](#install-torn-pda) below |
 
 Then open the ⚙ settings in the panel, paste your API key, press **save**. That's it.
@@ -63,7 +63,7 @@ Extras: bookmarks (quick buttons for commands or links), accent colour, opacity,
 
 <p>
   <a href="https://www.tampermonkey.net/"><img alt="Get Tampermonkey" src="https://img.shields.io/badge/1._GET-Tampermonkey-2b2b2b?style=for-the-badge&labelColor=141414"></a>
-  <a href="https://raw.githubusercontent.com/Ivylara19/faction-command-center/main/faction-command-center.user.js"><img alt="Install script" src="https://img.shields.io/badge/2._INSTALL-Faction_Command_Center-c9a74a?style=for-the-badge&labelColor=141414"></a>
+  <a href="https://raw.githubusercontent.com/Ivylara198/faction-command-center/main/faction-command-center.user.js"><img alt="Install script" src="https://img.shields.io/badge/2._INSTALL-Faction_Command_Center-c9a74a?style=for-the-badge&labelColor=141414"></a>
 </p>
 
 1. Install **Tampermonkey** for your browser (button 1).
@@ -78,7 +78,7 @@ Updates arrive automatically through Tampermonkey.
 ## Install (Torn PDA)
 
 <p>
-  <a href="https://raw.githubusercontent.com/Ivylara19/faction-command-center/main/faction-command-center.user.js"><img alt="Open the script to copy" src="https://img.shields.io/badge/1._OPEN-Script_to_copy-c9a74a?style=for-the-badge&labelColor=141414"></a>
+  <a href="https://raw.githubusercontent.com/Ivylara198/faction-command-center/main/faction-command-center.user.js"><img alt="Open the script to copy" src="https://img.shields.io/badge/1._OPEN-Script_to_copy-c9a74a?style=for-the-badge&labelColor=141414"></a>
   <a href="https://github.com/Manuito83/torn-pda"><img alt="Get Torn PDA" src="https://img.shields.io/badge/GET-Torn_PDA_app-2b2b2b?style=for-the-badge&labelColor=141414"></a>
 </p>
 
@@ -114,7 +114,7 @@ In Discord: channel settings → **Integrations** → **Webhooks** → **New Web
 | Nothing happens on PDA | Check the script is enabled and reload the page |
 | Alerts don't arrive | Alerts only run while Torn is open and a webhook is saved |
 
-Found a bug? <a href="https://github.com/Ivylara19/faction-command-center/issues"><img alt="Report a problem" src="https://img.shields.io/badge/REPORT-A_problem-ed4245?style=flat-square&labelColor=141414"></a>
+Found a bug? <a href="https://github.com/Ivylara198/faction-command-center/issues"><img alt="Report a problem" src="https://img.shields.io/badge/REPORT-A_problem-ed4245?style=flat-square&labelColor=141414"></a>
 
 ---
 

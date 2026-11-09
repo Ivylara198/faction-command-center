@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Faction Command Center
 // @namespace    faction-command-center
-// @version      1.6.1
+// @version      1.6.2
 // @author       IvyLara [4393901]
 // @homepageURL  https://www.torn.com/profiles.php?XID=4393901
 // @supportURL   https://www.torn.com/profiles.php?XID=4393901
-// @updateURL    https://raw.githubusercontent.com/Ivylara19/faction-command-center/main/faction-command-center.user.js
-// @downloadURL  https://raw.githubusercontent.com/Ivylara19/faction-command-center/main/faction-command-center.user.js
+// @updateURL    https://raw.githubusercontent.com/Ivylara198/faction-command-center/main/faction-command-center.user.js
+// @downloadURL  https://raw.githubusercontent.com/Ivylara198/faction-command-center/main/faction-command-center.user.js
 // @copyright    2026, IvyLara [4393901]. All rights reserved. Do not redistribute or modify without permission.
 // @description  Type a command, get faction info (members, chain, war, vault, armoury, war pay...). Alerts to your own Discord webhook. Works in Tampermonkey and Torn PDA. Your API key and webhook stay on your device only.
 // @match        https://www.torn.com/*
