@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Faction Command Center
 // @namespace    faction-command-center
-// @version      1.6.2
+// @version      1.7.0
 // @author       IvyLara [4393901]
 // @homepageURL  https://www.torn.com/profiles.php?XID=4393901
 // @supportURL   https://www.torn.com/profiles.php?XID=4393901
@@ -18,6 +18,7 @@
 // @connect      api.torn.com
 // @connect      discord.com
 // @connect      discordapp.com
+// @connect      raw.githubusercontent.com
 // @run-at       document-idle
 // @noframes
 // ==/UserScript==
@@ -115,7 +116,7 @@
     );
   }
 
-  const K_CALLS = 'fc_calls', K_SENT = 'fc_sent';
+  const K_CALLS = 'fc_calls', K_SENT = 'fc_sent', K_PAY = 'fc_pay', K_WSTATE = 'fc_wstate', K_UPD = 'fc_upd';
   const callsNow = () => { const c = Date.now() - 60000; return (get(K_CALLS, null) || []).filter(t => t > c); };
   async function getJson(url) {
     const recent = callsNow();
@@ -209,6 +210,56 @@
     return true;
   }
   function unclaim(key) { const m = get(K_SENT, null) || {}; delete m[key]; set(K_SENT, m); }
+
+  /* ---------- version, quiet hours, pay history ---------- */
+  const VERSION = '1.7.0';
+  const REPO_URL = 'https://github.com/Ivylara198/faction-command-center';
+  const RAW_URL = 'https://raw.githubusercontent.com/Ivylara198/faction-command-center/main/faction-command-center.user.js';
+  const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
+  const toMin = hm => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
+  function isQuiet(o) {
+    if (!o.qOn) return false;
+    const a = toMin(o.qFrom), b = toMin(o.qTo), d = new Date(), m = d.getHours() * 60 + d.getMinutes();
+    if (a === b) return false;
+    return a < b ? m >= a && m < b : m >= a || m < b;
+  }
+  const pingFor = (o, kind) => (o.role && (o.rolePing === 'both' || (o.rolePing === 'chain' && kind === 'chain')) ? { role: o.role } : {});
+  const parseWho = x => String(x || '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 10).map(t => (/^\d+$/.test(t) ? { id: t } : { name: t }));
+  const vNum = v => String(v).split('.').map(n => parseInt(n, 10) || 0);
+  const isNewer = (a, b) => { const x = vNum(a), y = vNum(b); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+
+  const payAll = () => get(K_PAY, null) || {};
+  function recordPay(e) {
+    const all = payAll(), old = all[e.id];
+    e.rows.forEach(r => { const o = old && old.rows.find(x => String(x.id) === String(r.id)); r.paid = !!(o && o.paid && o.pay === r.pay); });
+    all[e.id] = e;
+    Object.keys(all).sort((a, b) => all[b].at - all[a].at).slice(20).forEach(k => delete all[k]);
+    set(K_PAY, all);
+    return e;
+  }
+  function setPaid(warId, memberId, v) {
+    const all = payAll(), e = all[warId];
+    if (!e) return;
+    const r = e.rows.find(x => String(x.id) === String(memberId));
+    if (r) { r.paid = !!v; set(K_PAY, all); }
+  }
+  const csvCell = v => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  function csvFor(e) {
+    const head = ['war_id', 'war', 'member_id', 'name', 'hits', 'score', 'pay', 'paid'];
+    const lines = e.rows.map(r => [e.id, e.war, r.id, r.name, r.hits, r.score, r.pay, r.paid ? 'yes' : 'no'].map(csvCell).join(','));
+    return [head.join(','), ...lines].join('\r\n') + '\r\n';
+  }
+  const paidCount = e => e.rows.filter(r => r.paid).length;
+  function payResult(e) {
+    return {
+      title: `Payout · war ${e.id}`,
+      color: GOLD,
+      pay: e,
+      fields: [f('War', e.war), f('Total', money(e.total), true), f('Split', `${e.mode} · faction ${e.fac}% · players ${e.pl}%`, true), f('Paid', `${paidCount(e)} of ${e.rows.length}`, true)],
+      description: e.rows.map((r, i) => `${i + 1}. ${r.name} [${r.id}] · ${money(r.pay)} · ${r.paid ? 'paid' : 'not paid'}`).join('\n'),
+    };
+  }
+
 
   let alertErr = '';
   let _me = null;
@@ -562,12 +613,17 @@
         f('Left over', money(total - facAmt - paid), true),
       ];
       if (mode === 'hits') fields.push(f('Per hit', money(Math.floor(pot / W)), true));
+      const entry = recordPay({
+        id: String(w.id), at: Date.now(), war: `${mine.name} vs ${foe ? foe.name : '?'}`, total, mode, fac, pl, facAmt,
+        rows: elig.map(r => ({ id: String(r.id), name: r.name, hits: r.hits, score: r.score, pay: r.pay })),
+      });
       return {
         title: 'War payouts',
         color: GOLD,
         fields,
         description: elig.map(line).join('\n'),
         copy: elig.map(r => `${r.name} [${r.id}]: ${money(r.pay)}`).join('\n'),
+        pay: entry,
       };
     },
   };
@@ -600,6 +656,138 @@
     }),
   };
 
+  C.pays = {
+    desc: 'Saved war payouts. Usage: pays | pays last | pays <war id>',
+    run: async args => {
+      const all = payAll(), list = Object.values(all).sort((a, b) => b.at - a.at);
+      if (!list.length) throw new Error('No saved payouts yet. Run warpay after a war.');
+      const q = (args[0] || '').toLowerCase();
+      if (q) {
+        const e = q === 'last' ? list[0] : all[q];
+        if (!e) throw new Error('No saved payout for that war. Type pays to see them.');
+        return payResult(e);
+      }
+      return {
+        title: `Saved payouts (${list.length})`,
+        color: GOLD,
+        description: list.map(e => `war ${e.id} · ${e.war} · ${money(e.total)} · ${paidCount(e)}/${e.rows.length} paid · ${ago(e.at / 1000)}`).join('\n') + '\n\nOpen one with: pays <war id> or pays last',
+      };
+    },
+  };
+
+  C.unpaid = {
+    desc: 'Everyone still owed money, across all saved payouts',
+    run: async () => {
+      const by = {};
+      Object.values(payAll()).forEach(e => e.rows.filter(r => !r.paid).forEach(r => {
+        const x = by[r.id] || (by[r.id] = { id: r.id, name: r.name, total: 0, wars: [] });
+        x.total += r.pay; x.wars.push(e.id);
+      }));
+      const list = Object.values(by).sort((a, b) => b.total - a.total);
+      if (!list.length) return { title: 'Still unpaid', color: GOLD, description: 'Nobody is owed anything. All saved payouts are ticked as paid.' };
+      return {
+        title: `Still unpaid (${list.length})`,
+        color: GOLD,
+        fields: [f('Total owed', money(list.reduce((a, x) => a + x.total, 0)))],
+        description: list.map(x => `${x.name} [${x.id}] · ${money(x.total)} · war ${x.wars.join(', ')}`).join('\n'),
+        copy: list.map(x => `${x.name} [${x.id}]: ${money(x.total)}`).join('\n'),
+      };
+    },
+  };
+
+  C.score = {
+    desc: "Live war scoreboard: top attackers and who hasn't hit yet",
+    run: async () => {
+      const me = await myFactionId();
+      const now = Date.now() / 1000;
+      const w = (await warList())[0];
+      if (!w) throw new Error('No ranked war found.');
+      if (w.start > now) throw new Error(`The war starts in ${dur(w.start - now)}.`);
+      const fs = ents(w.factions);
+      const mine = fs.find(x => String(x.id) === me), foe = fs.find(x => String(x.id) !== me);
+      const live = !(w.end && w.end <= now);
+      const [att, basic] = await Promise.all([api('attacks'), api('basic')]);
+      const all = vals(att.attacks);
+      const ended = x => x.timestamp_ended || x.ended || x.timestamp_started || x.started || 0;
+      const aid = x => String(x.attacker_id ?? x.attacker?.id ?? '');
+      const afac = x => String(x.attacker_faction ?? x.attacker?.faction?.id ?? x.attacker?.faction_id ?? '');
+      const dfac = x => String(x.defender_faction ?? x.defender?.faction?.id ?? x.defender?.faction_id ?? '');
+      const scored = x => (x.respect_gain !== undefined ? Number(x.respect_gain) > 0 : /attacked|hospital|mugged|arrested/i.test(String(x.result || '')));
+      const mineHits = all.filter(x => {
+        const t = ended(x);
+        if (t < w.start || (w.end && t > w.end)) return false;
+        if (afac(x) && afac(x) !== me) return false;
+        if (foe && dfac(x) && dfac(x) !== String(foe.id)) return false;
+        return scored(x);
+      });
+      const by = {};
+      mineHits.forEach(x => {
+        const id = aid(x);
+        const r = by[id] || (by[id] = { id, name: x.attacker_name ?? x.attacker?.name ?? id, hits: 0, resp: 0 });
+        r.hits += 1; r.resp += Number(x.respect_gain) || 0;
+      });
+      const top = Object.values(by).sort((a, b) => b.resp - a.resp || b.hits - a.hits).slice(0, 10);
+      const noHit = members(basic).filter(m => !by[String(m.id)]);
+      const oldest = all.length ? Math.min(...all.map(ended)) : 0;
+      const fields = [f('Status', live ? 'LIVE' : 'Finished', true)];
+      if (mine && foe) {
+        fields.push(f('Score', `${mine.name} ${num(mine.score)} vs ${num(foe.score)} ${foe.name}`));
+        fields.push(f('Lead', `${(mine.score || 0) >= (foe.score || 0) ? 'you by ' : 'them by '}${num(Math.abs((mine.score || 0) - (foe.score || 0)))}`, true));
+      }
+      fields.push(f('Target', num(w.target), true), f('Hits counted', num(mineHits.length), true));
+      if (all.length >= 100 && oldest > w.start) fields.push(f('Note', `Torn only gave the last ${all.length} attacks, so earlier hits in this war are missing.`));
+      const lines = top.map((r, i) => `${i + 1}. ${r.name} [${r.id}] · ${r.hits} hits · ${r.resp.toFixed(1)} respect`);
+      const none = noHit.slice(0, 20).map(m => `${tag(m)} · ${m.status?.state || '?'} · ${m.last_action?.relative || ''}`);
+      return {
+        title: 'War scoreboard',
+        color: live ? 0xed4245 : GOLD,
+        fields,
+        description: (lines.join('\n') || 'No hits counted yet.') + `\n\nNo hits yet (${noHit.length}):\n` + (none.join('\n') || 'Everybody has hit.') + (noHit.length > 20 ? `\n+${noHit.length - 20} more` : ''),
+      };
+    },
+  };
+
+  async function userState(id) {
+    if (!SEAL()) throw new Error(lockMsg());
+    const key = getKey();
+    if (!key) throw new Error('Add your API key in Settings first.');
+    const k = encodeURIComponent(key);
+    let d = await getJson(`https://api.torn.com/user/${id}?selections=profile&key=${k}`);
+    if (d.error && MIGRATED.includes(d.error.code)) d = await getJson(`https://api.torn.com/v2/user/${id}/profile?key=${k}`);
+    if (d.error) throw apiErr(d);
+    const p = d.profile ?? d;
+    return { name: p.name || String(id), on: p.last_action?.status === 'Online', hosp: p.status?.state === 'Hospital', until: p.status?.until || 0, rel: p.last_action?.relative || '' };
+  }
+
+  C.watch = {
+    desc: 'Member watch. Usage: watch | watch add <name or id> | watch rm <name or id> | watch clear',
+    run: async args => {
+      const sub = (args[0] || '').toLowerCase(), rest = args.slice(1).join(' ').trim();
+      const o = opts();
+      let cur = o.watch.split(',').map(x => x.trim()).filter(Boolean);
+      if (sub === 'add') {
+        if (!rest) throw new Error('Usage: watch add <name or id>');
+        if (cur.length >= 10) throw new Error('You can watch up to 10 people.');
+        if (!cur.some(x => x.toLowerCase() === rest.toLowerCase())) cur.push(rest);
+      } else if (sub === 'rm' || sub === 'remove') {
+        if (!rest) throw new Error('Usage: watch rm <name or id>');
+        cur = cur.filter(x => x.toLowerCase() !== rest.toLowerCase());
+      } else if (sub === 'clear') cur = [];
+      if (sub) set(K_OPTS, cleanOpts({ ...o, watch: cur.join(', ') }));
+      if (!cur.length) return { title: 'Watch list', color: GOLD, description: 'Nobody yet. Add someone with: watch add <name or id>\nTurn on "member watch" under settings > alerts to get pings.' };
+      const ms = members(await api('basic'));
+      const now = Date.now() / 1000;
+      const lines = [];
+      for (const w of parseWho(cur.join(','))) {
+        const m = w.id ? ms.find(x => String(x.id) === w.id) : ms.find(x => (x.name || '').toLowerCase() === w.name.toLowerCase());
+        if (m) lines.push(`${tag(m)} · ${m.last_action?.status || '?'} · ${m.status?.state || '?'}${m.status?.state === 'Hospital' && m.status.until ? ' ' + dur(m.status.until - now) + ' left' : ''}`);
+        else if (w.id) { try { const u = await userState(w.id); lines.push(`${u.name} [${w.id}] · ${u.on ? 'Online' : 'Not online'}${u.hosp ? ' · Hospital' + (u.until ? ' ' + dur(u.until - now) + ' left' : '') : ''}`); } catch (e) { lines.push(`${w.id} · ${e.message}`); } }
+        else lines.push(`${w.name} · not in your faction, use their ID`);
+      }
+      return { title: `Watch list (${cur.length})`, color: GOLD, description: lines.join('\n') };
+    },
+  };
+
   C.report = {
     desc: 'Combined report: info + chain + war + activity',
     run: async () => {
@@ -615,15 +803,18 @@
 
   C.help = {
     desc: 'List commands',
-    run: async () => ({
-      title: 'Commands',
-      color: GOLD,
-      description: Object.entries(C).map(([k, v]) => `**${k}** — ${v.desc}`).join('\n'),
-    }),
+    run: async () => {
+      const al = opts().alias;
+      return {
+        title: 'Commands',
+        color: GOLD,
+        description: Object.entries(C).map(([k, v]) => `**${k}** — ${v.desc}`).join('\n') + (al.length ? '\n\nYour shortcuts:\n' + al.map(a => `**${a.n}** → ${a.c}`).join('\n') : ''),
+      };
+    },
   };
 
   /* ---------- Discord ---------- */
-  async function sendDiscord(res) {
+  async function sendDiscord(res, extra = {}) {
     if (!SEAL()) throw new Error(lockMsg());
     const url = get(K_HOOK);
     if (!url) throw new Error('No webhook saved.');
@@ -637,11 +828,14 @@
     if (res.description) embed.description = clip(res.description + MARK, 4000);
     if (res.fields?.length)
       embed.fields = res.fields.slice(0, 25).map(x => ({ name: clip(x.name, 250) || '​', value: clip(x.value, 1000) || '—', inline: !!x.inline }));
+    const role = /^\d{15,22}$/.test(extra.role || '') ? extra.role : '';
+    const body = { username: 'Faction Command', allowed_mentions: { parse: [], roles: role ? [role] : [] }, embeds: [embed] };
+    if (role) body.content = `<@&${role}>`;
     const r = await http({
       method: 'POST',
       url,
       headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify({ username: 'Faction Command', allowed_mentions: { parse: [] }, embeds: [embed] }),
+      data: JSON.stringify(body),
     });
     if (r.status < 200 || r.status >= 300) throw new Error(`Discord returned ${r.status}`);
   }
@@ -653,6 +847,8 @@
     op: 100, fs: IS_PDA ? 14 : 12, ac: '#c9a74a', hot: 'ctrl+shift+f', def: '',
     chain: false, mins: 5, war: false, warPre: 30, warGap: 0, oc: false, stock: '', rep: false, repAt: '20:00',
     payTotal: 0, payMode: 'hits', payMin: 1,
+    qOn: false, qFrom: '23:00', qTo: '07:00', qUrgent: true, role: '', rolePing: 'off',
+    watchOn: false, watch: '', weekly: false, weeklyDay: 1, weeklyAt: '12:00', weeklyDays: 7, upd: true,
     away: true,
     book: [{ l: 'report', t: 'report' }, { l: 'war', t: 'war' }, { l: 'chain', t: 'chain' }],
   };
@@ -663,6 +859,10 @@
     const bk = Array.isArray(o.book)
       ? o.book.filter(b => b && typeof b.l === 'string' && typeof b.t === 'string' && b.l.trim() && b.t.trim()).slice(0, 12).map(b => ({ l: b.l.trim().slice(0, 16), t: b.t.trim().slice(0, 200) }))
       : DEF.book;
+    const al = Array.isArray(o.alias)
+      ? o.alias.filter(a => a && typeof a.n === 'string' && typeof a.c === 'string' && /^[a-z][a-z0-9_-]{0,15}$/.test(a.n) && !C[a.n] && a.c.trim()).slice(0, 15).map(a => ({ n: a.n, c: a.c.trim().slice(0, 200) }))
+      : [];
+    const role = /^\d{15,22}$/.test(String(o.role || '')) ? String(o.role) : '';
     return {
       op: Math.round(n(o.op, 40, 100, DEF.op)), fs: [11, 12, 14].includes(+o.fs) ? +o.fs : DEF.fs,
       ac: /^#[0-9a-f]{6}$/i.test(o.ac) ? o.ac : DEF.ac, hot: t(o.hot, DEF.hot, 30).toLowerCase(), def: t(o.def, '', 40),
@@ -672,7 +872,12 @@
       rep: !!o.rep, repAt: /^([01]?\d|2[0-3]):[0-5]\d$/.test(o.repAt) ? o.repAt : DEF.repAt,
       payTotal: Math.round(n(o.payTotal, 0, 1e13, 0)), payMode: o.payMode === 'score' ? 'score' : 'hits',
       payMin: Math.round(n(o.payMin, 0, 1e6, DEF.payMin)), payFac: fac, payPl: pl,
-      away: o.away !== false, book: bk,
+      away: o.away !== false, book: bk, alias: al,
+      qOn: !!o.qOn, qFrom: TIME_RE.test(o.qFrom) ? o.qFrom : DEF.qFrom, qTo: TIME_RE.test(o.qTo) ? o.qTo : DEF.qTo, qUrgent: o.qUrgent !== false,
+      role, rolePing: role && ['chain', 'both'].includes(o.rolePing) ? o.rolePing : 'off',
+      watchOn: !!o.watchOn, watch: t(o.watch, '', 300),
+      weekly: !!o.weekly, weeklyDay: Math.round(n(o.weeklyDay, 0, 6, DEF.weeklyDay)), weeklyAt: TIME_RE.test(o.weeklyAt) ? o.weeklyAt : DEF.weeklyAt, weeklyDays: Math.round(n(o.weeklyDays, 1, 60, DEF.weeklyDays)),
+      upd: o.upd !== false,
     };
   }
   // opts>>
@@ -721,6 +926,13 @@
     @media (pointer:coarse){#bm button{padding:5px 12px}#gear{padding:0 16px}#tabs button{padding:4px 0}#cmd{padding:12px 8px}.acts button,.lnk{padding:4px 0}}
     #bm{display:flex;flex-wrap:wrap;gap:5px;padding:7px 10px 0}
     #bm:empty{display:none}
+    .pr{display:flex;align-items:center;gap:6px;padding:2px 0}
+    .pr input{accent-color:var(--ac,#c9a74a);margin:0}
+    .pr .nm{flex:1;text-align:left;color:#ddd;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .pr .am{color:#aaa}
+    .pr.done .nm,.pr.done .am{color:#666;text-decoration:line-through}
+    .paysum{margin:6px 0 2px;color:#aaa}
+    #upd{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 10px;border-top:1px solid #222;background:#17130c;color:#e8d08a;flex:none}
     #bm button{background:#1b1b1b;border:1px solid #2a2a2a;color:#b5b5b5;border-radius:10px;padding:1px 9px;cursor:pointer}
     #bm button:hover{color:var(--ac,#c9a74a);border-color:var(--ac,#c9a74a)}
     #bml .o span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
@@ -774,7 +986,17 @@
         <div class="o"><label class="c"><input type="checkbox" id="rep"> daily report at</label><input type="text" id="repAt" placeholder="20:00" autocomplete="off"></div>
         <label>Low-stock watch (item=min, comma separated)</label>
         <input type="text" class="w" id="stock" placeholder="xanax=50, empty blood bag=100" autocomplete="off">
-        <div class="dim note">Alerts post to your webhook and only run while Torn is open (a browser tab, or the Torn PDA page).</div>
+        <label>Quiet hours and pings</label>
+        <div class="o"><label class="c"><input type="checkbox" id="qOn"> quiet hours</label><span><input type="text" id="qFrom" style="width:52px" placeholder="23:00"> to <input type="text" id="qTo" style="width:52px" placeholder="07:00"></span></div>
+        <div class="o"><label class="c"><input type="checkbox" id="qUrgent"> chain &amp; war alerts ignore quiet hours</label></div>
+        <div class="o"><span>Discord role ID to ping</span><input type="text" id="role" placeholder="optional" autocomplete="off"></div>
+        <div class="o"><span>ping the role on</span><select id="rolePing"><option value="off">nothing</option><option value="chain">chain alerts</option><option value="both">chain + war alerts</option></select></div>
+        <label>People and reports</label>
+        <div class="o"><label class="c"><input type="checkbox" id="watchOn"> member watch (online / out of hospital)</label></div>
+        <input type="text" class="w" id="watch" placeholder="names or IDs, comma separated (max 10)" autocomplete="off">
+        <div class="o"><label class="c"><input type="checkbox" id="weekly"> weekly inactivity report</label><span><select id="weeklyDay"><option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option><option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option><option value="0">Sun</option></select> <input type="text" id="weeklyAt" style="width:52px" placeholder="12:00"></span></div>
+        <div class="o"><span>count as inactive after (days)</span><input type="number" id="weeklyDays" min="1" max="60"></div>
+        <div class="dim note">Alerts post to your webhook and only run while Torn is open (a browser tab, or the Torn PDA page). To get a role ID: in Discord turn on Developer Mode, right-click the role, Copy ID.</div>
       </div>
 
       <div class="tab" id="tc">
@@ -790,6 +1012,10 @@
         <div id="bml"></div>
         <div class="o"><input type="text" id="bl" placeholder="name" maxlength="16" style="width:80px"><input type="text" id="bt" class="g" placeholder="command or link"><button class="lnk" id="badd">add</button></div>
         <div class="dim note">A bookmark runs a command (like <b>warpay 500m</b>) or opens a link (like https://www.torn.com/factions.php). Up to 12.</div>
+        <label style="margin-top:10px">Shortcuts (your own short names for commands)</label>
+        <div id="sml"></div>
+        <div class="o"><input type="text" id="sn" placeholder="name" maxlength="16" style="width:80px"><input type="text" id="sc" class="g" placeholder="command, e.g. warpay 500m score"><button class="lnk" id="sadd">add</button></div>
+        <div class="dim note">Type the short name like any command, and add extra words after it. Example: shortcut <b>pay</b> = <b>warpay 500m score fac=20</b>. Up to 15.</div>
       </div>
 
       <div class="tab" id="td">
@@ -797,6 +1023,8 @@
         <div class="o"><span>text size</span><select id="fs"><option value="11">small</option><option value="12">normal</option><option value="14">large</option></select></div>
         <div class="o"><span>accent colour</span><input type="color" id="ac"></div>
         <div class="o"><label class="c"><input type="checkbox" id="away"> close when clicking outside</label></div>
+        <div class="o"><label class="c"><input type="checkbox" id="updOn"> tell me about new versions</label></div>
+        <div class="dim note">This checks GitHub once a day for the newest version number. Your key is never sent.</div>
         <div class="row"><button class="lnk dim" id="reset">reset position</button></div>
       </div>
 
@@ -810,6 +1038,7 @@
       <div class="acts"><button id="save">save</button><button id="test" class="dim">test webhook</button><span id="msg"></span></div>
     </div>
     <div id="out"></div>
+    <div id="upd" hidden></div>
   </div>`;
   document.documentElement.appendChild(host);
 
@@ -890,16 +1119,54 @@
     } catch (e) { return false; }
   }
 
+  function saveFile(name, text, mime) {
+    if (IS_PDA) return copyText(text).then(ok => (ok ? 'csv copied' : 'copy failed'));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+    a.download = name;
+    root.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    return Promise.resolve('saved ' + name);
+  }
+  function payBox(e0) {
+    const box = el('', ''), sum = el('paysum', ''), list = el('', ''), acts = el('row', '');
+    const cur = () => payAll()[e0.id] || e0;
+    function paint() {
+      const e = cur();
+      list.textContent = '';
+      e.rows.forEach(r => {
+        const row = el('pr' + (r.paid ? ' done' : ''), '');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = !!r.paid; cb.title = 'mark as paid'; cb.setAttribute('autocomplete', 'off');
+        cb.onchange = () => { setPaid(e0.id, r.id, cb.checked); paint(); };
+        const nm = el('lnk nm', r.name, 'button'); nm.title = 'open profile';
+        nm.onclick = () => openBookmark('https://www.torn.com/profiles.php?XID=' + r.id);
+        row.append(cb, nm, el('am', money(r.pay), 'span'));
+        list.append(row);
+      });
+      const owed = e.rows.filter(r => !r.paid).reduce((a, r) => a + r.pay, 0);
+      sum.textContent = `${paidCount(e)}/${e.rows.length} paid · ${money(owed)} still to pay`;
+    }
+    const mk = (label, fn) => { const b = el('lnk', label, 'button'); b.onclick = () => fn(b, label); acts.append(b); };
+    mk('mark all paid', () => { cur().rows.forEach(r => setPaid(e0.id, r.id, true)); paint(); });
+    mk('export csv', b => { saveFile(`war-${e0.id}-pay.csv`, csvFor(cur()), 'text/csv').then(m => { b.textContent = m; }); });
+    mk('copy unpaid', b => { copyText(cur().rows.filter(r => !r.paid).map(r => `${r.name} [${r.id}]: ${money(r.pay)}`).join('\n')).then(ok => { b.textContent = ok ? 'copied' : 'copy failed'; }); });
+    box.append(sum, list, acts);
+    paint();
+    return box;
+  }
+
   /* ----- output ----- */
   function render(res, note) {
     out.textContent = '';
     out.append(el('t', res.title + MARK));
-    if (res.description) out.append(el('d', res.description.replace(/\*\*/g, '').replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, '$1$2')));
+    if (res.description && !res.pay) out.append(el('d', res.description.replace(/\*\*/g, '').replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, '$1$2')));
     (res.fields || []).forEach(x => {
       const r = el('r' + (String(x.value).includes('\n') || String(x.value).length > 40 ? ' ml' : ''), '');
       r.append(el('k', x.name, 'span'), el('v', x.value, 'span'));
       out.append(r);
     });
+    if (res.pay) out.append(payBox(res.pay));
     if (res.copy) {
       const b = el('cp', 'copy list', 'button');
       b.onclick = () => { copyText(res.copy).then(ok => { b.textContent = ok ? 'copied' : 'copy failed'; }); };
@@ -913,12 +1180,14 @@
   let hi = 0;
 
   async function run(line) {
-    const parts = line.trim().replace(/^[/!]/, '').split(/\s+/);
-    const name = (parts.shift() || '').toLowerCase();
+    let parts = line.trim().replace(/^[/!]/, '').split(/\s+/);
+    let name = (parts.shift() || '').toLowerCase();
     if (!name) return;
     setCfg(false);
     if (!SEAL()) return showError(new Error(lockMsg()));
     history.push(line); hi = history.length;
+    const al = opts().alias.find(a => a.n === name);
+    if (al) { const re = al.c.replace(/^[/!]/, '').split(/\s+/); name = re.shift().toLowerCase(); parts = [...re, ...parts]; }
     const cmd = C[name];
     if (!cmd) return showError(new Error(`Unknown command "${name}". Type help.`));
     out.textContent = '';
@@ -967,8 +1236,12 @@
     ['mins', 'warPre', 'warGap', 'payMin', 'payFac', 'payPl'].forEach(k => { $(k).value = o[k]; });
     $('repAt').value = o.repAt; $('stock').value = o.stock;
     $('payTotal').value = fmtAmt(o.payTotal); $('payMode').value = o.payMode;
-    $('op').value = o.op; $('fs').value = String(o.fs); $('ac').value = o.ac; $('away').checked = o.away;
-    renderBook(); refreshUsage();
+    $('op').value = o.op; $('fs').value = String(o.fs); $('ac').value = o.ac; $('away').checked = o.away; $('updOn').checked = o.upd;
+    $('qOn').checked = o.qOn; $('qFrom').value = o.qFrom; $('qTo').value = o.qTo; $('qUrgent').checked = o.qUrgent;
+    $('role').value = o.role; $('rolePing').value = o.rolePing;
+    $('watchOn').checked = o.watchOn; $('watch').value = o.watch;
+    $('weekly').checked = o.weekly; $('weeklyDay').value = String(o.weeklyDay); $('weeklyAt').value = o.weeklyAt; $('weeklyDays').value = o.weeklyDays;
+    renderBook(); renderAlias(); refreshUsage();
   }
   /* ----- bookmarks: quick buttons that run a command or open a link ----- */
   function openBookmark(t) {
@@ -989,6 +1262,31 @@
       $('bml').append(row);
     });
   }
+  /* ----- shortcuts: your own names for commands ----- */
+  function saveAlias(list) { set(K_OPTS, cleanOpts({ ...opts(), alias: list })); renderAlias(); }
+  function renderAlias() {
+    const list = opts().alias;
+    $('sml').textContent = '';
+    list.forEach((a, i) => {
+      const row = el('o', ''), x = el('lnk dim', 'remove', 'button');
+      x.onclick = () => saveAlias(list.filter((_, j) => j !== i));
+      row.append(el('', `${a.n} → ${a.c}`, 'span'), x);
+      $('sml').append(row);
+    });
+  }
+  $('sadd').onclick = () => {
+    const n = $('sn').value.trim().toLowerCase(), c = $('sc').value.trim(), cur = opts().alias;
+    if (!/^[a-z][a-z0-9_-]{0,15}$/.test(n)) return say('name: letters and numbers, up to 16', 'err');
+    if (C[n]) return say(`"${n}" is already a built-in command`, 'err');
+    if (cur.some(a => a.n === n)) return say('you already have that shortcut', 'err');
+    if (!c) return say('add the command it should run', 'err');
+    if (!C[c.replace(/^[/!]/, '').split(/\s+/)[0].toLowerCase()]) return say("that command doesn't exist, try help", 'err');
+    if (cur.length >= 15) return say('15 shortcuts max', 'err');
+    saveAlias([...cur, { n, c }]);
+    $('sn').value = ''; $('sc').value = '';
+    say('added', 'ok');
+  };
+
   $('badd').onclick = () => {
     const l = $('bl').value.trim(), t = $('bt').value.trim(), cur = opts().book;
     if (!l || !t) return say('add a name and a command or link', 'err');
@@ -1051,21 +1349,31 @@
     if (hot && !/(ctrl|alt|meta|cmd)/.test(hot)) return say('hotkey needs ctrl, alt or meta', 'err');
     const fac = parseFloat($('payFac').value) || 0, pl = $('payPl').value === '' ? 100 - fac : parseFloat($('payPl').value) || 0;
     if (fac < 0 || pl < 0 || fac + pl > 100.0001) return say('faction % + players % must not exceed 100', 'err');
-    if ($('rep').checked && !/^([01]?\d|2[0-3]):[0-5]\d$/.test($('repAt').value.trim())) return say('report time should look like 20:00', 'err');
+    if ($('rep').checked && !TIME_RE.test($('repAt').value.trim())) return say('report time should look like 20:00', 'err');
+    if ($('qOn').checked && !(TIME_RE.test($('qFrom').value.trim()) && TIME_RE.test($('qTo').value.trim()))) return say('quiet hours should look like 23:00 to 07:00', 'err');
+    const role = $('role').value.trim();
+    if (role && !/^\d{15,22}$/.test(role)) return say('a role ID is a long number, see the note', 'err');
+    if ($('rolePing').value !== 'off' && !role) return say('add a role ID to ping', 'err');
+    if ($('weekly').checked && !TIME_RE.test($('weeklyAt').value.trim())) return say('weekly report time should look like 12:00', 'err');
     const o = cleanOpts({
       ...opts(), hot, def: $('def').value.trim(),
       chain: $('chain').checked, mins: $('mins').value, war: $('war').checked, warPre: $('warPre').value, warGap: $('warGap').value,
       oc: $('oc').checked, stock: $('stock').value.trim(), rep: $('rep').checked, repAt: $('repAt').value.trim(),
       payTotal: amt, payMode: $('payMode').value, payMin: $('payMin').value, payFac: fac, payPl: pl, away: $('away').checked,
       op: +$('op').value, fs: +$('fs').value, ac: $('ac').value,
+      qOn: $('qOn').checked, qFrom: $('qFrom').value.trim(), qTo: $('qTo').value.trim(), qUrgent: $('qUrgent').checked,
+      role, rolePing: $('rolePing').value,
+      watchOn: $('watchOn').checked, watch: $('watch').value.trim(),
+      weekly: $('weekly').checked, weeklyDay: $('weeklyDay').value, weeklyAt: $('weeklyAt').value.trim(), weeklyDays: $('weeklyDays').value,
+      upd: $('updOn').checked,
     });
-    if ((o.chain || o.war || o.oc || o.rep || o.stock) && !hook) return say('alerts need a webhook', 'err');
+    if ((o.chain || o.war || o.oc || o.rep || o.stock || o.watchOn || o.weekly) && !hook) return say('alerts need a webhook', 'err');
     if (keyIn) set(K_KEY, keyIn);
     set(K_HOOK, hook);
     set(K_SEND, $('send').checked && !!hook);
     set(K_OPTS, o);
     _me = null; cache.clear();
-    fillSettings(); applyOpts();
+    fillSettings(); applyOpts(); checkUpdate();
     say('saved on this device', 'ok');
   };
   $('test').onclick = async () => {
@@ -1084,7 +1392,7 @@
     say('position reset', 'ok');
   };
   $('wipe').onclick = () => {
-    [K_KEY, K_HOOK, K_SEND, K_OPTS, K_POS, K_LAST, K_SENT, K_CALLS].forEach(k => GM_deleteValue(k));
+    [K_KEY, K_HOOK, K_SEND, K_OPTS, K_POS, K_LAST, K_SENT, K_CALLS, K_PAY, K_WSTATE, K_UPD].forEach(k => GM_deleteValue(k));
     _me = null; fillSettings(); applyOpts(); cache.clear();
     say('deleted', 'ok');
   };
@@ -1141,7 +1449,7 @@
         // another open tab may already have sent this one
         if (Date.now() - get(K_LAST, 0) > 90000) {
           set(K_LAST, Date.now());
-          await sendDiscord({ title: `Chain alert: ${num(c.current)}`, color: 0xed4245, description: `${dur(left)} left on the chain timer.` });
+          await sendDiscord({ title: `Chain alert: ${num(c.current)}`, color: 0xed4245, description: `${dur(left)} left on the chain timer.` }, pingFor(o, 'chain'));
         }
       }
     } else alerted = false;
@@ -1155,16 +1463,17 @@
     const fs = ents(w.factions);
     const mine = fs.find(x => String(x.id) === me), foe = fs.find(x => String(x.id) !== me);
     if (!mine || !foe) return;
+    const ping = pingFor(o, 'war');
     const now = Date.now() / 1000;
     if (w.start > now) {
       if (w.start - now <= o.warPre * 60 && claim(`war_pre_${w.id}`, 864e5))
-        await sendDiscord({ title: 'Ranked war starting soon', color: 0xed4245, description: `${mine.name} vs ${foe.name} starts in ${dur(w.start - now)}.`, fields: [f('Target', num(w.target), true)] });
+        await sendDiscord({ title: 'Ranked war starting soon', color: 0xed4245, description: `${mine.name} vs ${foe.name} starts in ${dur(w.start - now)}.`, fields: [f('Target', num(w.target), true)] }, ping);
       return;
     }
     if (w.end && w.end <= now) {
       if (now - w.end < 6 * 3600 && claim(`war_end_${w.id}`, 864e5)) {
         const won = String(w.winner) === me;
-        await sendDiscord({ title: won ? 'War won' : 'War over', color: won ? 0x57f287 : 0x95a5a6, description: `Final: ${mine.name} ${num(mine.score)} vs ${num(foe.score)} ${foe.name}.\nRun warpay when you're ready to pay out.` });
+        await sendDiscord({ title: won ? 'War won' : 'War over', color: won ? 0x57f287 : 0x95a5a6, description: `Final: ${mine.name} ${num(mine.score)} vs ${num(foe.score)} ${foe.name}.\nRun warpay when you're ready to pay out.` }, ping);
       }
       return;
     }
@@ -1172,9 +1481,9 @@
     const prev = get('fc_warsign', null);
     set('fc_warsign', { id: String(w.id), sign });
     if (prev && prev.id === String(w.id) && prev.sign && sign && prev.sign !== sign && claim(`war_flip_${w.id}_${sign}`, 120000))
-      await sendDiscord({ title: sign > 0 ? 'You took the lead' : 'Lead lost', color: sign > 0 ? 0x57f287 : 0xed4245, description: `${mine.name} ${num(mine.score)} vs ${num(foe.score)} ${foe.name}` });
+      await sendDiscord({ title: sign > 0 ? 'You took the lead' : 'Lead lost', color: sign > 0 ? 0x57f287 : 0xed4245, description: `${mine.name} ${num(mine.score)} vs ${num(foe.score)} ${foe.name}` }, ping);
     if (o.warGap > 0 && Math.abs(lead) <= o.warGap && claim(`war_close_${w.id}`, 15 * 60e3))
-      await sendDiscord({ title: 'Score is close', color: 0xf1c40f, description: `${lead >= 0 ? 'You lead' : 'You trail'} by ${num(Math.abs(lead))}.\n${mine.name} ${num(mine.score)} vs ${num(foe.score)} ${foe.name}` });
+      await sendDiscord({ title: 'Score is close', color: 0xf1c40f, description: `${lead >= 0 ? 'You lead' : 'You trail'} by ${num(Math.abs(lead))}.\n${mine.name} ${num(mine.score)} vs ${num(foe.score)} ${foe.name}` }, ping);
   }
 
   async function ocTick() {
@@ -1212,17 +1521,64 @@
     try { await sendDiscord(await C.report.run()); } catch (e) { unclaim(key); throw e; }
   }
 
+  async function watchTick(o) {
+    const who = parseWho(o.watch);
+    if (!who.length) return;
+    cache.delete('basic');
+    const ms = members(await api('basic'));
+    const prev = get(K_WSTATE, null) || {}, next = {};
+    const errs = [];
+    for (const w of who) {
+      try {
+        let id = w.id, m = null;
+        if (id) m = ms.find(x => String(x.id) === id) || null;
+        else {
+          m = ms.find(x => (x.name || '').toLowerCase() === w.name.toLowerCase());
+          if (!m) { errs.push(`can't find "${w.name}" in your faction, use their ID`); continue; }
+          id = String(m.id);
+        }
+        const st = m
+          ? { name: m.name || id, on: m.last_action?.status === 'Online', hosp: m.status?.state === 'Hospital' }
+          : await userState(id);
+        next[id] = { on: !!st.on, hosp: !!st.hosp };
+        const p = prev[id];
+        if (!p) continue; // first look is only a baseline
+        if (!p.on && st.on && claim(`w_on_${id}`, 10 * 60e3))
+          await sendDiscord({ title: `${st.name} is online`, color: 0x57f287, description: `${st.name} [${id}] just came online.` });
+        if (p.hosp && !st.hosp && claim(`w_out_${id}`, 10 * 60e3))
+          await sendDiscord({ title: `${st.name} left hospital`, color: 0xf1c40f, description: `${st.name} [${id}] is out of hospital.` });
+      } catch (e) { errs.push(e.message); }
+    }
+    set(K_WSTATE, next);
+    if (errs.length) throw new Error('watch: ' + errs[0]);
+  }
+
+  async function weeklyTick(o) {
+    const d = new Date();
+    if (d.getDay() !== o.weeklyDay) return;
+    const late = Date.now() - new Date(d.getFullYear(), d.getMonth(), d.getDate(), ...o.weeklyAt.split(':').map(Number)).getTime();
+    if (late < 0 || late > 90 * 60e3) return;
+    const key = `wk_${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    if (!claim(key, 6 * 864e5)) return;
+    try { await sendDiscord(await C.inactive.run([String(o.weeklyDays)])); } catch (e) { unclaim(key); throw e; }
+  }
+
   let tickN = 0;
   async function alertsTick() {
     const o = opts();
     if (!getKey() || !get(K_HOOK) || !SEAL()) return;
     if (!claim('tick', 50000)) return; // another tab is already polling
     const n = tickN++, jobs = [];
-    if (o.chain) jobs.push(chainTick(o));
-    if (o.war) jobs.push(warTick(o));
-    if (o.oc && n % 5 === 0) jobs.push(ocTick());
-    if (o.stock && n % 10 === 0) jobs.push(stockTick(o));
-    if (o.rep) jobs.push(reportTick(o));
+    const quiet = isQuiet(o), urgent = !quiet || o.qUrgent; // quiet hours silence everything except chain and war, if you allow those
+    if (o.chain && urgent) jobs.push(chainTick(o));
+    if (o.war && urgent) jobs.push(warTick(o));
+    if (!quiet) {
+      if (o.oc && n % 5 === 0) jobs.push(ocTick());
+      if (o.stock && n % 10 === 0) jobs.push(stockTick(o));
+      if (o.rep) jobs.push(reportTick(o));
+      if (o.watchOn && o.watch) jobs.push(watchTick(o));
+      if (o.weekly) jobs.push(weeklyTick(o));
+    }
     const res = await Promise.allSettled(jobs);
     const bad = res.find(r => r.status === 'rejected');
     if (bad) alertErr = `${new Date().toLocaleTimeString()} · ${bad.reason && bad.reason.message}`;
@@ -1270,6 +1626,29 @@
     .observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
   setInterval(ensureCredit, 3000);
   try { console.log('%cFaction Command Center%c by ' + CREDIT, 'color:#ff7ab0;font-weight:700', 'color:#999'); } catch (e) { /* ignore */ }
+
+  /* ----- update notice: once a day, asks GitHub for the newest version number (no key is sent) ----- */
+  function showUpdate(v) {
+    const box = $('upd');
+    if (!v || !isNewer(v, VERSION)) { box.hidden = true; return; }
+    box.textContent = '';
+    const b = el('lnk', 'get it', 'button');
+    b.onclick = () => { if (IS_PDA) location.assign(REPO_URL); else window.open(REPO_URL, '_blank', 'noopener'); };
+    box.append(el('', `new version ${v} is out`, 'span'), b);
+    box.hidden = false;
+  }
+  async function checkUpdate() {
+    if (!opts().upd) return showUpdate('');
+    const last = get(K_UPD, null) || {};
+    if (Date.now() - (last.t || 0) < 12 * 3600e3) return showUpdate(last.v);
+    try {
+      const r = await http({ method: 'GET', url: RAW_URL });
+      const m = /@version\s+(\d+(?:\.\d+){0,2})/.exec(String(r.responseText || ''));
+      set(K_UPD, { t: Date.now(), v: m ? m[1] : last.v || '' });
+      showUpdate(m ? m[1] : last.v);
+    } catch (e) { set(K_UPD, { t: Date.now(), v: last.v || '' }); }
+  }
+  setTimeout(checkUpdate, 8000);
 
   setInterval(alertsTick, 60000);
   setTimeout(alertsTick, 5000);

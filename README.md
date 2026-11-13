@@ -41,9 +41,14 @@ A small draggable panel on torn.com. Type a command (or tap a bookmark) and it s
 | `armoury` `stock <item>` | Armoury totals and stock of one item |
 | `oc` `news` `attacks` | Organized crimes, faction news, recent attacks |
 | `warpay [amount] [hits\|score] [fac=20] [pl=80]` | War payouts: set how much the faction keeps and how much players share |
+| `score` | Live war scoreboard: score, top attackers, and who hasn't hit yet |
+| `pays` `pays last` `pays <war id>` `unpaid` | Saved war payouts with a paid tick-list, CSV export, and who is still owed |
+| `watch add <name or ID>` `watch rm <name>` `watch` `watch clear` | Member watch list (get pinged when they come online or leave hospital) |
 | `report` `usage` `help` | Combined report, API calls used, list of commands |
 
-**Alerts to your Discord webhook** (only while Torn is open): low chain timer, ranked war starting / lead changes / close score / war over, OC ready or empty slots, low armoury stock, and a daily report.
+**Alerts to your Discord webhook** (only while Torn is open): low chain timer, ranked war starting / lead changes / close score / war over, OC ready or empty slots, low armoury stock, a daily report, a **weekly inactivity report**, and **member watch** alerts (online / out of hospital).
+
+**New in 1.7:** quiet hours (pause alerts overnight, chain and war can still get through), optional Discord role ping for chain alerts, command shortcuts (e.g. `pay` = `warpay 1m score`), and a small notice when a newer version is on GitHub.
 
 Extras: bookmarks (quick buttons for commands or links), accent colour, opacity, text size, hotkey, settings export/import (desktop only).
 
@@ -53,6 +58,7 @@ Extras: bookmarks (quick buttons for commands or links), accent colour, opacity,
 
 - Your API key and Discord webhook are stored **only on your device** (inside Tampermonkey or Torn PDA).
 - The key is sent **only to api.torn.com**. Results go **only to the webhook you enter**.
+- The only other request is an optional version check to this GitHub repo (once every 12 hours, no key sent). Turn it off in settings, look tab.
 - There is no server, no tracking, no analytics. Nothing is collected.
 - The script only **reads** data. It never performs actions in your account.
 - Tip: create a key with the lowest access level that still works. If a command says the access level is too low, raise it.
